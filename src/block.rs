@@ -19,6 +19,7 @@ pub(crate) mod fields {
     pub(crate) const DATA_BEGIN: usize = ID_END;
 }
 
+#[derive(Debug)]
 pub struct Block<'a, const S: usize> {
     pub data: &'a [u8],
     pub crc: CRC,
@@ -74,6 +75,7 @@ impl<'a, const S: usize> Block<'a, S> {
     }
 }
 
+#[derive(Debug)]
 pub struct BlockFactory {
     pub(crate) id: ID,
 }
@@ -110,6 +112,13 @@ impl BlockFactory {
     }
 }
 
+impl Default for BlockFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug)]
 pub struct BlockInfo<const S: usize> {
     pub id: u64,
     pub is_valid: bool,

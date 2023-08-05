@@ -1,7 +1,8 @@
 use crate::block::{Block, BlockFactory, BlockInfo, ID};
-use crate::error::StorageError;
+use crate::error::Error;
 use crate::storage::Storage;
 
+#[derive(Debug)]
 pub struct Filesystem<S: Storage, const BS: usize> {
     storage: S,
     offset: usize,
@@ -9,7 +10,7 @@ pub struct Filesystem<S: Storage, const BS: usize> {
 }
 
 impl<S: Storage, const BS: usize> Filesystem<S, BS> {
-    pub fn new(storage: S) -> Result<Self, StorageError> {
+    pub fn new(storage: S) -> Result<Self, Error> {
         let mut fs = Filesystem {
             storage,
             offset: 0,
@@ -29,17 +30,23 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
         self.storage
     }
 
-    pub fn append(&mut self, data: &[u8]) -> Result<usize, StorageError> {
-        let data = &data[..self.data_block_size()];
-        // TODO: add headers
-        self.storage.write(self.offset, data)?;
+    pub fn append<F>(&mut self, writer: F) -> Result<usize, Error>
+    where
+        F: FnOnce(&mut [u8]),
+    {
+        let mut buf = [0_u8; BS];
+
+        let _ = self
+            .blk_factory
+            .create_from_writer::<_, BS>(&mut buf[..], writer);
+        self.storage.write(self.offset, &buf[..])?;
         self.incr_offset();
 
-        Ok(data.len())
+        Ok(Self::data_block_size())
     }
 
-    pub fn data_block_size(&self) -> usize {
-        self.storage.block_size() - Block::<BS>::attributes_size()
+    pub const fn data_block_size() -> usize {
+        BS - Block::<BS>::attributes_size()
     }
 
     pub fn incr_offset(&mut self) {
@@ -47,7 +54,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
             (self.offset + 1) % self.storage.max_block_index() + self.storage.min_block_index();
     }
 
-    fn init(&mut self) -> Result<(), StorageError> {
+    fn init(&mut self) -> Result<(), Error> {
         let mut buf = [0_u8; BS];
         let buf = &mut buf[..];
         let (read_buf, _) = buf.split_at_mut(self.storage.block_size());
@@ -55,11 +62,11 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
         let mut begin = self.storage.min_block_index();
         let mut end = self.storage.max_block_index();
         if begin > usize::MAX - 2 || end < begin + 2 {
-            return Err(StorageError::TooSmallStorage);
+            return Err(Error::TooSmallFilesystem);
         }
 
         self.storage.read(begin, &mut read_buf[..])?;
-        let left_block = BlockInfo::<BS>::from_buffer(&read_buf[..]);
+        let left_block = BlockInfo::<BS>::from_buffer(read_buf);
         if !left_block.is_valid {
             // storage wasn't formatted, it is empty, offset is begin
             self.init_attrs(begin, 0);
@@ -67,7 +74,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
         }
 
         self.storage.read(end - 1, &mut read_buf[..])?;
-        let mut right_block = BlockInfo::<BS>::from_buffer(&read_buf[..]);
+        let mut right_block = BlockInfo::<BS>::from_buffer(read_buf);
         if right_block.is_valid && right_block.id > left_block.id {
             // wraparound is after end, next block to write is begin
             self.init_attrs(begin, right_block.id + 1);
@@ -82,7 +89,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
             let mid = (begin + end) / 2;
 
             self.storage.read(mid, &mut read_buf[..])?;
-            let mid_block = BlockInfo::<BS>::from_buffer(&read_buf[..]);
+            let mid_block = BlockInfo::<BS>::from_buffer(read_buf);
 
             if Self::can_have_tail(&mid_block, &right_block) {
                 begin = mid;
@@ -95,7 +102,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
 
         // begin will be last value before wraparound
         self.init_attrs(begin + 1, last_id + 1);
-        return Ok(());
+        Ok(())
     }
 
     fn can_have_tail(left: &BlockInfo<BS>, right: &BlockInfo<BS>) -> bool {
@@ -111,6 +118,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
     }
 }
 
+#[derive(Debug)]
 pub struct FsInitAttrs {
     pub next_offset: usize,
     pub next_id: ID,
@@ -153,7 +161,7 @@ mod tests {
 
         let mut i = 0_u8;
         let mut fill_block = |blk_data: &mut [u8]| {
-            blk_data.fill(i as u8);
+            blk_data.fill(i);
             i = if i == u8::MAX { 0 } else { i + 1 };
         };
 

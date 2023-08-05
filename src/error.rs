@@ -1,7 +1,9 @@
 #[derive(Clone, Debug)]
-pub enum StorageError {
-    TooSmallStorage,
+pub enum Error {
+    TooSmallFilesystem,
     BlockOutOfRange,
     NotEnoughSpace,
     DataLenNotEqualToBlockSize,
+    InvalidBlockSize,
+    TooSmallBuffer,
 }

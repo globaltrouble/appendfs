@@ -1,8 +1,8 @@
-use crate::error::StorageError;
+use crate::error::Error;
 
 pub trait Storage {
-    fn read(&mut self, blk_idx: usize, data: &mut [u8]) -> Result<usize, StorageError>;
-    fn write(&mut self, blk_idx: usize, data: &[u8]) -> Result<usize, StorageError>;
+    fn read(&mut self, blk_idx: usize, data: &mut [u8]) -> Result<usize, Error>;
+    fn write(&mut self, blk_idx: usize, data: &[u8]) -> Result<usize, Error>;
 
     // Make as member functions to make it configurable
     fn block_size(&self) -> usize;
@@ -10,22 +10,27 @@ pub trait Storage {
     fn max_block_index(&self) -> usize;
 }
 
+#[derive(Debug)]
 pub struct RamStorage<const S: usize, const B: usize> {
     pub(crate) data: [u8; S],
 }
 
 impl<const S: usize, const B: usize> RamStorage<S, B> {
-    pub fn new() -> Result<Self, ()> {
-        if S % B != 0 || S < 2 * B {
-            return Err(());
+    pub fn new() -> Result<Self, Error> {
+        if S < 2 * B {
+            return Err(Error::TooSmallBuffer);
+        }
+
+        if S % B != 0 {
+            return Err(Error::InvalidBlockSize);
         }
 
         Ok(Self { data: [0_u8; S] })
     }
 
-    fn validate_block_index(&self, blk_idx: usize) -> Result<(), StorageError> {
+    fn validate_block_index(&self, blk_idx: usize) -> Result<(), Error> {
         if blk_idx < self.min_block_index() || blk_idx >= self.max_block_index() {
-            return Err(StorageError::BlockOutOfRange);
+            return Err(Error::BlockOutOfRange);
         }
 
         Ok(())
@@ -33,11 +38,11 @@ impl<const S: usize, const B: usize> RamStorage<S, B> {
 }
 
 impl<const S: usize, const B: usize> Storage for RamStorage<S, B> {
-    fn read(&mut self, blk_idx: usize, data: &mut [u8]) -> Result<usize, StorageError> {
+    fn read(&mut self, blk_idx: usize, data: &mut [u8]) -> Result<usize, Error> {
         self.validate_block_index(blk_idx)?;
 
         if data.len() < self.block_size() {
-            return Err(StorageError::NotEnoughSpace);
+            return Err(Error::NotEnoughSpace);
         }
 
         let begin = blk_idx * self.block_size();
@@ -48,11 +53,11 @@ impl<const S: usize, const B: usize> Storage for RamStorage<S, B> {
         Ok(self.block_size())
     }
 
-    fn write(&mut self, blk_idx: usize, data: &[u8]) -> Result<usize, StorageError> {
+    fn write(&mut self, blk_idx: usize, data: &[u8]) -> Result<usize, Error> {
         self.validate_block_index(blk_idx)?;
 
         if data.len() != self.block_size() {
-            return Err(StorageError::DataLenNotEqualToBlockSize);
+            return Err(Error::DataLenNotEqualToBlockSize);
         }
 
         let begin = blk_idx * self.block_size();
