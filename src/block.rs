@@ -85,8 +85,8 @@ impl BlockFactory {
 
     pub fn create_from_writer<'a, F, const B: usize>(
         &mut self,
-        writer: F,
         buf: &'a mut [u8],
+        writer: F,
     ) -> Block<'a>
     where
         F: FnOnce(&mut [u8]),

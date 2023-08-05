@@ -15,6 +15,10 @@ impl<S: Storage, const N: usize> Filesystem<S, N> {
         Ok(fs)
     }
 
+    pub fn release(self) -> S {
+        self.storage
+    }
+
     pub fn append(&mut self, data: &[u8]) -> Result<usize, StorageError> {
         let data = &data[..self.data_block_size()];
         // TODO: add headers
@@ -59,7 +63,7 @@ impl<S: Storage, const N: usize> Filesystem<S, N> {
         }
 
         // at least 2 elements must be present
-        while end - begin >= 2 {
+        while end - begin > 2 {
             let mid = (begin + end) / 2;
 
             self.storage.read(mid, &mut read_buf[..])?;
@@ -93,19 +97,21 @@ impl<S: Storage, const N: usize> Filesystem<S, N> {
 #[cfg(test)]
 mod tests {
     use super::{BlockInfo, Filesystem};
+    use crate::block::BlockFactory;
     use crate::storage::RamStorage;
 
-    const BLOCK: usize = 256;
-    const SIZE: usize = BLOCK * 4 * 128;
+    const BLOCK_SIZE: usize = 256;
+    const BLOCK_COUNT: usize = 512;
+    const SIZE: usize = BLOCK_SIZE * BLOCK_COUNT;
 
-    type DefaultStorage = RamStorage<SIZE, BLOCK>;
-    type Fs = Filesystem<DefaultStorage, BLOCK>;
+    type DefaultStorage = RamStorage<SIZE, BLOCK_SIZE>;
+    type Fs = Filesystem<DefaultStorage, BLOCK_SIZE>;
 
     #[test]
-    fn test_fs_empty() {
-        let storage = DefaultStorage::new().expect("Can't create storage for test_fs_empty");
+    fn test_fs() {
+        let storage = DefaultStorage::new().expect("Can't create storage for test_fs_full");
 
-        let first_block = BlockInfo::from_buffer(&storage.data[..BLOCK]);
+        let first_block = BlockInfo::from_buffer(&storage.data[..BLOCK_SIZE]);
         assert!(
             !first_block.is_valid,
             "First block must not be valid, it contains invalid crc!"
@@ -116,22 +122,37 @@ mod tests {
             fs.offset, 0,
             "Storage was not initialized, offset must be eq to 0"
         );
-    }
 
-    #[test]
-    fn test_fs_full() {
-        let storage = DefaultStorage::new().expect("Can't create storage for test_fs_full");
+        let mut storage = fs.release();
 
-        let first_block = BlockInfo::from_buffer(&storage.data[..BLOCK]);
-        assert!(
-            !first_block.is_valid,
-            "First block must not be valid, it contains invalid crc!"
-        );
+        let begin_id = 42;
+        let mut factory = BlockFactory::new(begin_id);
 
-        let fs = Fs::new(storage).expect("Can't create fs for test_fs_full");
-        assert_eq!(
-            fs.offset, 0,
-            "Storage was not full, last written block was at last blk_idx, offset must be eq to 0"
-        );
+        let mut i = 0_u8;
+        let mut fill_block = |blk_data: &mut [u8]| {
+            blk_data.fill(i as u8);
+            i = if i == u8::MAX { 0 } else { i + 1 };
+        };
+
+        // fill n-th block,
+        // first BLOCK_COUNT iterations test offset initialization for not full storage.
+        // next 2 * BLOCK_COUNT iterations test offset initialization for full storage after wraparound
+        for i in 0..BLOCK_COUNT * 3 {
+            let begin = (i * BLOCK_SIZE) % SIZE;
+            let end = begin + BLOCK_SIZE;
+
+            let _ = factory.create_from_writer::<_, BLOCK_SIZE>(
+                &mut storage.data[begin..end],
+                &mut fill_block,
+            );
+            let fs = Fs::new(storage).expect("Can't create fs for test_fs_full");
+            let expected_offset = (i + 1) % BLOCK_COUNT;
+            assert_eq!(
+                fs.offset, expected_offset,
+                "Storage was not full, last written block was at last blk_idx, offset must be eq to 0"
+            );
+
+            storage = fs.release();
+        }
     }
 }
