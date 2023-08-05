@@ -244,8 +244,8 @@ mod tests {
 
     #[test]
     fn test_ram_storage() {
-        const SIZE: usize = 2048 + 256;
         const BLOCK: usize = 256;
+        const SIZE: usize = BLOCK * 9;
 
         let mut ram_storage = RamStorage::<SIZE, BLOCK>::new().expect("Can't create ramstorage");
         let iter_count = SIZE / BLOCK * 3;
@@ -281,7 +281,7 @@ mod tests {
             let expected = [val; BLOCK];
             assert!(
                 !slices_are_equal(&expected[..], &actual[..]),
-                "Can't perform test, slices are equal, offset: {}",
+                "Can't perform test, slices are equal before read, offset: {}",
                 offset,
             );
 
