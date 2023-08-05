@@ -1,7 +1,7 @@
 use crc;
 
-type CRC = u16;
-type ID = u64;
+pub type CRC = u16;
+pub type ID = u64;
 
 pub const CRC_ALGORITHM: crc::Crc<CRC> = crc::Crc::<CRC>::new(&crc::CRC_16_CDMA2000);
 
@@ -19,18 +19,18 @@ pub(crate) mod fields {
     pub(crate) const DATA_BEGIN: usize = ID_END;
 }
 
-pub struct Block<'a> {
+pub struct Block<'a, const S: usize> {
     pub data: &'a [u8],
     pub crc: CRC,
 }
 
-impl<'a> Block<'a> {
+impl<'a, const S: usize> Block<'a, S> {
     pub fn from_buffer(buf: &'a [u8]) -> Self {
         let crc = Self::calculated_crc(buf);
         Self { data: buf, crc }
     }
 
-    pub fn from_other(other: Block<'a>) -> Self {
+    pub fn from_other(other: Block<'a, S>) -> Self {
         Self {
             data: other.data,
             crc: other.crc,
@@ -75,27 +75,31 @@ impl<'a> Block<'a> {
 }
 
 pub struct BlockFactory {
-    id: ID,
+    pub(crate) id: ID,
 }
 
 impl BlockFactory {
-    pub fn new(id: ID) -> BlockFactory {
-        BlockFactory { id }
+    pub fn new() -> BlockFactory {
+        BlockFactory { id: 0 }
     }
 
-    pub fn create_from_writer<'a, F, const B: usize>(
+    pub(crate) fn set_id(&mut self, id: ID) {
+        self.id = id;
+    }
+
+    pub fn create_from_writer<'a, F, const S: usize>(
         &mut self,
         buf: &'a mut [u8],
         writer: F,
-    ) -> Block<'a>
+    ) -> Block<'a, S>
     where
         F: FnOnce(&mut [u8]),
     {
         writer(&mut buf[fields::DATA_BEGIN..]);
-        Block::<'a>::set_id(buf, self.get_next_id());
-        Block::<'a>::set_crc(buf);
+        Block::<'a, S>::set_id(buf, self.get_next_id());
+        Block::<'a, S>::set_crc(buf);
 
-        Block::<'a>::from_buffer(buf)
+        Block::<'a, S>::from_buffer(buf)
     }
 
     pub fn get_next_id(&mut self) -> ID {
@@ -106,20 +110,20 @@ impl BlockFactory {
     }
 }
 
-pub struct BlockInfo {
+pub struct BlockInfo<const S: usize> {
     pub id: u64,
     pub is_valid: bool,
 }
 
-impl BlockInfo {
-    pub fn from_block(block: &Block) -> BlockInfo {
+impl<const BS: usize> BlockInfo<BS> {
+    pub fn from_block(block: &Block<BS>) -> Self {
         let is_valid = block.is_valid();
         let id = if is_valid { block.id() } else { 0 };
 
         Self { id, is_valid }
     }
 
-    pub fn from_buffer(data: &[u8]) -> BlockInfo {
-        Self::from_block(&Block::from_buffer(data))
+    pub fn from_buffer(data: &[u8]) -> Self {
+        Self::from_block(&Block::<BS>::from_buffer(data))
     }
 }
