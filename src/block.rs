@@ -89,7 +89,7 @@ impl BlockFactory {
         self.id = id;
     }
 
-    pub fn create_from_writer<'a, F, const S: usize>(
+    pub fn create_with_writer<'a, F, const S: usize>(
         &mut self,
         buf: &'a mut [u8],
         writer: F,

@@ -30,7 +30,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
         self.storage
     }
 
-    pub fn append<F>(&mut self, writer: F) -> Result<usize, Error>
+    pub fn write<F>(&mut self, writer: F) -> Result<usize, Error>
     where
         F: FnOnce(&mut [u8]),
     {
@@ -38,9 +38,22 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
 
         let _ = self
             .blk_factory
-            .create_from_writer::<_, BS>(&mut buf[..], writer);
+            .create_with_writer::<_, BS>(&mut buf[..], writer);
         self.storage.write(self.offset, &buf[..])?;
         self.incr_offset();
+
+        Ok(Self::data_block_size())
+    }
+
+    pub fn read<F>(&mut self, blk_offset: usize, reader: F) -> Result<usize, Error>
+    where
+        F: FnOnce(&[u8]),
+    {
+        // self.offset is next position for write, so it is the oldest position for read
+        let offset = self.trim_offset(self.offset + blk_offset);
+        let mut buf = [0_u8; BS];
+        self.storage.read(offset, &mut buf[..])?;
+        reader(&buf[Block::<BS>::attributes_size()..]);
 
         Ok(Self::data_block_size())
     }
@@ -50,8 +63,11 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
     }
 
     pub fn incr_offset(&mut self) {
-        self.offset =
-            (self.offset + 1) % self.storage.max_block_index() + self.storage.min_block_index();
+        self.offset = self.trim_offset(self.offset + 1)
+    }
+
+    fn trim_offset(&self, offset: usize) -> usize {
+        offset % self.storage.max_block_index() + self.storage.min_block_index()
     }
 
     fn init(&mut self) -> Result<(), Error> {
@@ -129,16 +145,17 @@ mod tests {
     use super::{BlockInfo, Filesystem};
     use crate::block::BlockFactory;
     use crate::storage::RamStorage;
-
-    const BLOCK_SIZE: usize = 256;
-    const BLOCK_COUNT: usize = 512;
-    const SIZE: usize = BLOCK_SIZE * BLOCK_COUNT;
-
-    type DefaultStorage = RamStorage<SIZE, BLOCK_SIZE>;
-    type Fs = Filesystem<DefaultStorage, BLOCK_SIZE>;
+    use crate::utils::slices_are_equal;
 
     #[test]
-    fn test_fs() {
+    fn test_fs_init() {
+        const BLOCK_SIZE: usize = 256;
+        const BLOCK_COUNT: usize = 512;
+        const SIZE: usize = BLOCK_SIZE * BLOCK_COUNT;
+
+        type DefaultStorage = RamStorage<SIZE, BLOCK_SIZE>;
+        type Fs = Filesystem<DefaultStorage, BLOCK_SIZE>;
+
         let storage = DefaultStorage::new().expect("Can't create storage for test_fs_full");
 
         let first_block = BlockInfo::<BLOCK_SIZE>::from_buffer(&storage.data[..BLOCK_SIZE]);
@@ -172,7 +189,7 @@ mod tests {
             let begin = (i * BLOCK_SIZE) % SIZE;
             let end = begin + BLOCK_SIZE;
 
-            let blk = factory.create_from_writer::<_, BLOCK_SIZE>(
+            let blk = factory.create_with_writer::<_, BLOCK_SIZE>(
                 &mut storage.data[begin..end],
                 &mut fill_block,
             );
@@ -185,6 +202,80 @@ mod tests {
             assert_eq!(fs.offset, expected_offset);
 
             assert_eq!(fs.blk_factory.id, cur_id + 1);
+
+            storage = fs.release();
+        }
+    }
+
+    #[test]
+    fn test_fs_io() {
+        const BLOCK_SIZE: usize = 128;
+        const BLOCK_COUNT: usize = 80;
+        const SIZE: usize = BLOCK_SIZE * BLOCK_COUNT;
+
+        type DefaultStorage = RamStorage<SIZE, BLOCK_SIZE>;
+        type Fs = Filesystem<DefaultStorage, BLOCK_SIZE>;
+
+        const DATA_SIZE: usize = Fs::data_block_size();
+
+        let mut storage = DefaultStorage::new().expect("Can't create storage for test_fs_full");
+
+        // write n-th block,
+        // first BLOCK_COUNT iterations test IO for not full storage.
+        // next 2 * BLOCK_COUNT iterations test IO for full storage after wraparound
+        for i in 0..BLOCK_COUNT * 3 {
+            let end = (i * BLOCK_SIZE) % SIZE + BLOCK_SIZE;
+            let begin = end - DATA_SIZE;
+            let mut expected_data = [0_u8; DATA_SIZE];
+            expected_data.copy_from_slice(&storage.data[begin..end]);
+
+            let mut fs = Fs::new(storage).expect("Can't create fs for test_fs_full");
+
+            // read the oldest block, that will be overwritten
+            let read_before = fs.read(0, |blk_data| {
+                assert!(
+                    slices_are_equal(&expected_data[..], &blk_data[..]),
+                    "Wrong data was read at i: {}, {:?} vs {:?}",
+                    i,
+                    &expected_data[..],
+                    &blk_data[..]
+                );
+            });
+            assert!(
+                read_before.is_ok(),
+                "Err read data before write at i: {}, err: {:?}",
+                i,
+                read_before
+            );
+
+            assert!(
+                i < u8::MAX as usize,
+                "I will be wrapped around, can't continue test."
+            );
+
+            let fill_value = (i + 1) as u8;
+            let write = fs.write(|blk_data| {
+                blk_data.fill(fill_value);
+            });
+            assert!(write.is_ok(), "Err write data i: {}, err: {:?}", i, write);
+
+            expected_data.fill(fill_value);
+            let last_blkid = BLOCK_COUNT - 1;
+            let read_after = fs.read(last_blkid, |blk_data| {
+                assert!(
+                    slices_are_equal(&expected_data[..], &blk_data[..]),
+                    "Wrong data was read after write at i: {}, {:?} vs {:?}",
+                    i,
+                    &expected_data[..],
+                    &blk_data[..]
+                );
+            });
+            assert!(
+                read_after.is_ok(),
+                "Err read data after write at i: {}, err: {:?}",
+                i,
+                read_before
+            );
 
             storage = fs.release();
         }
