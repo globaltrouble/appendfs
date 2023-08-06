@@ -10,6 +10,7 @@ crc = "3.0.1"
 
 [features]
 default_features = []
+file_storage = []
 
 # for example app
 [dev-dependencies]

@@ -8,4 +8,5 @@ pub enum Error {
     TooSmallBuffer,
     CanNotPerformRead,
     CanNotPerformWrite,
+    NotValidBlock,
 }

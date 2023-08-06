@@ -1,12 +1,14 @@
-use crate::block::{Block, BlockFactory, BlockInfo, ID};
+use crate::block::{fields, Block, BlockFactory, BlockInfo, ID};
 use crate::error::Error;
 use crate::storage::Storage;
+use crate::utils::trim_block_idx;
 
 #[derive(Debug)]
 pub struct Filesystem<S: Storage, const BS: usize> {
     storage: S,
     offset: usize,
     blk_factory: BlockFactory,
+    buffer: [u8; BS],
 }
 
 impl<S: Storage, const BS: usize> Filesystem<S, BS> {
@@ -17,6 +19,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
             storage,
             offset: 0,
             blk_factory: BlockFactory::new(),
+            buffer: [0_u8; BS],
         };
         fs.init()?;
 
@@ -32,16 +35,16 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
         self.storage
     }
 
-    pub fn write<F>(&mut self, writer: F) -> Result<usize, Error>
+    pub fn append<F>(&mut self, writer: F) -> Result<usize, Error>
     where
         F: FnOnce(&mut [u8]),
     {
-        let mut buf = [0_u8; BS];
-
+        let blk_len = self.storage.block_size();
+        let data_buf = &mut self.buffer[..blk_len];
         let _ = self
             .blk_factory
-            .create_with_writer::<_, BS>(&mut buf[..], writer);
-        self.storage.write(self.offset, &buf[..])?;
+            .create_with_writer::<_, BS>(data_buf, writer);
+        self.storage.write(self.offset, data_buf)?;
         self.incr_offset();
 
         Ok(Self::data_block_size())
@@ -53,10 +56,17 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
     {
         // self.offset is next position for write, so it is the oldest position for read
         let offset = self.trim_offset(self.offset + blk_offset);
-        let mut buf = [0_u8; BS];
-        self.storage.read(offset, &mut buf[..])?;
-        reader(&buf[Block::<BS>::attributes_size()..]);
+        let blk_len = self.storage.block_size();
+        let data_buf = &mut self.buffer[..blk_len];
+        self.storage.read(offset, data_buf)?;
 
+        {
+            let block = Block::<BS>::from_buffer(data_buf);
+            if !block.is_valid() {
+                return Err(Error::NotValidBlock);
+            }
+        }
+        reader(&data_buf[fields::DATA_BEGIN..]);
         Ok(Self::data_block_size())
     }
 
@@ -69,7 +79,11 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
     }
 
     fn trim_offset(&self, offset: usize) -> usize {
-        offset % self.storage.max_block_index() + self.storage.min_block_index()
+        trim_block_idx(
+            offset,
+            self.storage.min_block_index(),
+            self.storage.max_block_index(),
+        )
     }
 
     fn init(&mut self) -> Result<(), Error> {
@@ -154,7 +168,8 @@ pub struct FsInitAttrs {
 mod tests {
     use super::{BlockInfo, Filesystem};
     use crate::block::BlockFactory;
-    use crate::storage::RamStorage;
+    use crate::error::Error;
+    use crate::storage::ram::RamStorage;
     use crate::utils::slices_are_equal;
 
     #[test]
@@ -251,12 +266,30 @@ mod tests {
                     &blk_data[..]
                 );
             });
-            assert!(
-                read_before.is_ok(),
-                "Err read data before write at i: {}, err: {:?}",
-                i,
-                read_before
-            );
+
+            match read_before {
+                Ok(_) => {
+                    assert!(
+                        i >= BLOCK_COUNT,
+                        "Data must be read only after wraparound, i: {}",
+                        i
+                    );
+                }
+                Err(Error::NotValidBlock) => {
+                    assert!(
+                        i < BLOCK_COUNT,
+                        "Data must not be read before wraparound, i: {}",
+                        i
+                    );
+                }
+                Err(e) => {
+                    assert!(
+                        false,
+                        "Err read data before write at i: {}, err: {:?}",
+                        i, e
+                    );
+                }
+            }
 
             assert!(
                 i < u8::MAX as usize,
@@ -264,7 +297,7 @@ mod tests {
             );
 
             let fill_value = (i + 1) as u8;
-            let write = fs.write(|blk_data| {
+            let write = fs.append(|blk_data| {
                 blk_data.fill(fill_value);
             });
             assert!(write.is_ok(), "Err write data i: {}, err: {:?}", i, write);
@@ -284,7 +317,7 @@ mod tests {
                 read_after.is_ok(),
                 "Err read data after write at i: {}, err: {:?}",
                 i,
-                read_before
+                read_after
             );
 
             storage = fs.release();

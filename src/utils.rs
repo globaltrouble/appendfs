@@ -13,3 +13,7 @@ pub fn validate_block_index<S: Storage>(storage: &S, blk_idx: usize) -> Result<(
 
     Ok(())
 }
+
+pub fn trim_block_idx(blk_idx: usize, min_blk: usize, max_blk: usize) -> usize {
+    blk_idx % max_blk + min_blk
+}
