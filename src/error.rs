@@ -6,4 +6,6 @@ pub enum Error {
     DataLenNotEqualToBlockSize,
     InvalidBlockSize,
     TooSmallBuffer,
+    CanNotPerformRead,
+    CanNotPerformWrite,
 }

@@ -10,6 +10,8 @@ pub struct Filesystem<S: Storage, const BS: usize> {
 }
 
 impl<S: Storage, const BS: usize> Filesystem<S, BS> {
+    pub const BLOCK_SIZE: usize = BS;
+
     pub fn new(storage: S) -> Result<Self, Error> {
         let mut fs = Filesystem {
             storage,
