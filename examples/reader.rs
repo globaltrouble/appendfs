@@ -62,6 +62,14 @@ fn main() {
 
     let base_offset = filesystem.offset();
     let len = end_block - begin_block;
+    log::info!(
+        "Reading from {} to {} ({}), base is: {}",
+        begin_block,
+        end_block,
+        len,
+        base_offset
+    );
+
     for offset in 0..len {
         let read = filesystem.read(offset as usize, |blk_data| {
             log::info!(

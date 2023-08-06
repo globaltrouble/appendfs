@@ -25,6 +25,7 @@ impl FileStorage {
     ) -> Result<Self, String> {
         let file = OpenOptions::new()
             .read(true)
+            .write(true)
             .open(&device[..])
             .map_err(|e| e.to_string())?;
 
