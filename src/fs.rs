@@ -134,6 +134,14 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
 
         left.id > right.id
     }
+
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    pub fn next_id(&self) -> u64 {
+        self.blk_factory.id
+    }
 }
 
 #[derive(Debug)]

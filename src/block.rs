@@ -77,7 +77,7 @@ impl<'a, const S: usize> Block<'a, S> {
 
 #[derive(Debug)]
 pub struct BlockFactory {
-    pub(crate) id: ID,
+    pub id: ID,
 }
 
 impl BlockFactory {

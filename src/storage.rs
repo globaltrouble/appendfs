@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::utils::validate_block_index;
 
 pub trait Storage {
     fn read(&mut self, blk_idx: usize, data: &mut [u8]) -> Result<usize, Error>;
@@ -27,19 +28,11 @@ impl<const S: usize, const B: usize> RamStorage<S, B> {
 
         Ok(Self { data: [0_u8; S] })
     }
-
-    fn validate_block_index(&self, blk_idx: usize) -> Result<(), Error> {
-        if blk_idx < self.min_block_index() || blk_idx >= self.max_block_index() {
-            return Err(Error::BlockOutOfRange);
-        }
-
-        Ok(())
-    }
 }
 
 impl<const S: usize, const B: usize> Storage for RamStorage<S, B> {
     fn read(&mut self, blk_idx: usize, data: &mut [u8]) -> Result<usize, Error> {
-        self.validate_block_index(blk_idx)?;
+        validate_block_index(self, blk_idx)?;
 
         if data.len() < self.block_size() {
             return Err(Error::NotEnoughSpace);
@@ -54,7 +47,7 @@ impl<const S: usize, const B: usize> Storage for RamStorage<S, B> {
     }
 
     fn write(&mut self, blk_idx: usize, data: &[u8]) -> Result<usize, Error> {
-        self.validate_block_index(blk_idx)?;
+        validate_block_index(self, blk_idx)?;
 
         if data.len() != self.block_size() {
             return Err(Error::DataLenNotEqualToBlockSize);
