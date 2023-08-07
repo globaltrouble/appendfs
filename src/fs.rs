@@ -8,6 +8,8 @@ pub struct Filesystem<S: Storage, const BS: usize> {
     storage: S,
     offset: usize,
     blk_factory: BlockFactory,
+    is_empty: bool,
+    is_full: bool,
     buffer: [u8; BS],
 }
 
@@ -19,6 +21,8 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
             storage,
             offset: 0,
             blk_factory: BlockFactory::new(),
+            is_empty: true,
+            is_full: false,
             buffer: [0_u8; BS],
         };
         fs.init()?;
@@ -26,9 +30,11 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
         Ok(fs)
     }
 
-    fn init_attrs(&mut self, next_offset: usize, next_id: ID) {
+    fn init_attrs(&mut self, next_offset: usize, next_id: ID, is_empty: bool, is_full: bool) {
         self.offset = next_offset;
         self.blk_factory.set_id(next_id);
+        self.is_empty = is_empty;
+        self.is_full = is_full;
     }
 
     pub fn release(self) -> S {
@@ -45,6 +51,12 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
             .blk_factory
             .create_with_writer::<_, BS>(data_buf, writer);
         self.storage.write(self.offset, data_buf)?;
+
+        self.is_empty = false;
+        if self.offset == self.storage.max_block_index() - 1 {
+            self.is_full = true;
+        }
+
         self.incr_offset();
 
         Ok(Self::data_block_size())
@@ -101,22 +113,32 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
         let left_block = BlockInfo::<BS>::from_buffer(read_buf);
         if !left_block.is_valid {
             // storage wasn't formatted, it is empty, offset is begin
-            self.init_attrs(begin, 0);
+            let is_empty = true;
+            let is_full = false;
+            self.init_attrs(begin, 0, is_empty, is_full);
             return Ok(());
         }
+        // as first block is valid is can't be empty
+        let is_empty = false;
 
         self.storage.read(end - 1, &mut read_buf[..])?;
         let mut right_block = BlockInfo::<BS>::from_buffer(read_buf);
         if right_block.is_valid && right_block.id > left_block.id {
             // wraparound is after end, next block to write is begin
-            self.init_attrs(begin, right_block.id + 1);
+            let is_empty = false;
+            let is_full = true;
+            self.init_attrs(begin, right_block.id + 1, is_empty, is_full);
             return Ok(());
         }
+
+        let is_full = right_block.is_valid;
 
         // must be always the same as begin.id
         let mut last_id = left_block.id;
 
         // at least 2 elements must be present
+        // will found only wraparound, last block must be checked to have wraparound
+        // begin of the range will always point to last written element
         while end - begin > 2 {
             let mid = (begin + end) / 2;
 
@@ -132,8 +154,19 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
             };
         }
 
+        // in case not all memory was used wraparound will not exists,
+        // place for new block will be after last block
+        if end - begin == 2 {
+            self.storage.read(begin + 1, &mut read_buf[..])?;
+            let block_inf = BlockInfo::<BS>::from_buffer(read_buf);
+            if block_inf.is_valid && block_inf.id > last_id {
+                begin += 1;
+                last_id = block_inf.id;
+            }
+        }
+
         // begin will be last value before wraparound
-        self.init_attrs(begin + 1, last_id + 1);
+        self.init_attrs(begin + 1, last_id + 1, is_empty, is_full);
         Ok(())
     }
 
@@ -155,6 +188,14 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
 
     pub fn next_id(&self) -> u64 {
         self.blk_factory.id
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.is_empty
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.is_full
     }
 }
 
@@ -255,6 +296,30 @@ mod tests {
             expected_data.copy_from_slice(&storage.data[begin..end]);
 
             let mut fs = Fs::new(storage).expect("Can't create fs for test_fs_full");
+
+            if i == 0 {
+                assert!(fs.is_empty(), "Before first write fs must be empty!");
+            } else {
+                assert!(
+                    !fs.is_empty(),
+                    "After first write fs must be non empty! i: {}",
+                    i
+                );
+            }
+
+            if i < BLOCK_COUNT {
+                assert!(
+                    !fs.is_full(),
+                    "Fs can't be full before BLOCK_COUNT writes, i: {}",
+                    i
+                );
+            } else {
+                assert!(
+                    fs.is_full(),
+                    "Fs must be full after BLOCK_COUNT writes, i: {}",
+                    i
+                );
+            }
 
             // read the oldest block, that will be overwritten
             let read_before = fs.read(0, |blk_data| {
