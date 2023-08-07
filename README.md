@@ -12,3 +12,35 @@ Ideal for storing binary logs on embedded device, some internals:
 * during the startup last block will be found with binary search, performs `log_2(STORAGE_SIZE / BLOCK_SIZE) + 2` reads to init filesystem.
 
 
+### Test
+cargo test --lib
+
+### Build & run examples:
+* build writer:
+    ```
+    cargo build --example writer --features=file_storage
+    ```
+* build reader:
+    ```
+    cargo build --example reader --features=file_storage
+    ```
+
+* run writer (flush all lines from stdin to fs):
+    ```
+    ./target/x86_64-unknown-linux-gnu/debug/examples/writer --device /dev/sda
+    ```
+* run reader (read all data from fs to stdout):
+    ```
+    ./target/x86_64-unknown-linux-gnu/debug/examples/reader --device /dev/sda
+    ```
+
+### TODO:
+* do not remove newline symbol in writer
+* retries for file_storage
+* support fs formatting (clear all data)
+* add id to partition id to each block (to handle formatting and overlapping partitions)
+* add first superblock with fs attributes (version)
+* add config support (single block, its offset can be tracked in each block)
+* add persistent blocks (will be not overwritten, only with force flag) to store critical events
+* release embedded hal sd_card storage
+* retries for embedded hal sd_card storage

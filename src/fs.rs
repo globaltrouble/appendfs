@@ -62,12 +62,21 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
         Ok(Self::data_block_size())
     }
 
+    /// Read data from the beginning of the stream (the oldest write).
     pub fn read<F>(&mut self, blk_offset: usize, reader: F) -> Result<usize, Error>
     where
         F: FnOnce(&[u8]),
     {
         // self.offset is next position for write, so it is the oldest position for read
-        let offset = self.trim_offset(self.offset + blk_offset);
+        // in case storage is full, next offset will be position of oldest write
+        // in case storage is NOT full, first block will be position of oldest write
+        let base_offset = if self.is_full() {
+            self.offset + blk_offset
+        } else {
+            self.storage.min_block_index() + blk_offset
+        };
+
+        let offset = self.trim_offset(base_offset);
         let blk_len = self.storage.block_size();
         let data_buf = &mut self.buffer[..blk_len];
         self.storage.read(offset, data_buf)?;
@@ -322,7 +331,8 @@ mod tests {
             }
 
             // read the oldest block, that will be overwritten
-            let read_before = fs.read(0, |blk_data| {
+            let blk_offset = if i >= BLOCK_COUNT { 0 } else { i };
+            let read_before = fs.read(blk_offset, |blk_data| {
                 assert!(
                     slices_are_equal(&expected_data[..], &blk_data[..]),
                     "Wrong data was read at i: {}, {:?} vs {:?}",
@@ -368,8 +378,15 @@ mod tests {
             assert!(write.is_ok(), "Err write data i: {}, err: {:?}", i, write);
 
             expected_data.fill(fill_value);
-            let last_blkid = BLOCK_COUNT - 1;
-            let read_after = fs.read(last_blkid, |blk_data| {
+
+            let blk_offset = if i >= BLOCK_COUNT - 1 {
+                assert!(fs.is_full(), "Fs must be full after write {}", i);
+                BLOCK_COUNT - 1
+            } else {
+                assert!(!fs.is_full(), "Fs must not be full after write {}", i);
+                i
+            };
+            let read_after = fs.read(blk_offset, |blk_data| {
                 assert!(
                     slices_are_equal(&expected_data[..], &blk_data[..]),
                     "Wrong data was read after write at i: {}, {:?} vs {:?}",

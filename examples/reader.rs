@@ -8,7 +8,7 @@ use appendfs::storage::file::FileStorage;
 
 const DEFAULT_BLOCK_SIZE: u32 = 512;
 const DEFAULT_BEGIN_BLOCK_IDX: u32 = 2048;
-const DEFAULT_END_BLOCK_IDX: u32 = 1024 * 1024 * 1024 * 3 / 512;
+const DEFAULT_END_BLOCK_IDX: u32 = 1024 * 1024 * 1024 * 3 / DEFAULT_BLOCK_SIZE;
 
 // TODO: make block size configurable
 pub type Fs = Filesystem<FileStorage, { DEFAULT_BLOCK_SIZE as usize }>;
@@ -60,23 +60,29 @@ fn main() {
         filesystem.next_id(),
     );
 
+    if filesystem.is_empty() {
+        log::warn!("Nothing to read, fs is empty!");
+        return;
+    }
+
     let base_offset = filesystem.offset();
-    let len = end_block - begin_block;
+    let used = if filesystem.is_full() {
+        (end_block - begin_block) as usize
+    } else {
+        filesystem.offset()
+    };
+
     log::info!(
-        "Reading from {} to {} ({}), base is: {}",
+        "Reading from {} to {} (used={}), base is: {}",
         begin_block,
         end_block,
-        len,
+        used,
         base_offset
     );
 
-    for offset in 0..len {
+    for offset in 0..used {
         let read = filesystem.read(offset as usize, |blk_data| {
-            log::info!(
-                "Reading base_offset: {}, offste: {} ...",
-                base_offset,
-                offset
-            );
+            log::info!("Reading offste: {} ...", offset);
             {
                 let mut handle = io::stdout().lock();
                 match handle.write_all(blk_data) {
