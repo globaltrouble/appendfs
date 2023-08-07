@@ -14,6 +14,12 @@ pub fn validate_block_index<S: Storage>(storage: &S, blk_idx: usize) -> Result<(
     Ok(())
 }
 
-pub fn trim_block_idx(blk_idx: usize, min_blk: usize, max_blk: usize) -> usize {
-    blk_idx % max_blk + min_blk
+pub fn trim_block_idx_with_wraparound(blk_idx: usize, min_blk: usize, max_blk: usize) -> usize {
+    if blk_idx < min_blk {
+        min_blk
+    } else if blk_idx >= max_blk {
+        blk_idx % max_blk + min_blk
+    } else {
+        blk_idx
+    }
 }

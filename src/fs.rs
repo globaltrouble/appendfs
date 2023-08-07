@@ -1,7 +1,7 @@
 use crate::block::{fields, Block, BlockFactory, BlockInfo, ID};
 use crate::error::Error;
 use crate::storage::Storage;
-use crate::utils::trim_block_idx;
+use crate::utils::trim_block_idx_with_wraparound;
 
 #[derive(Debug)]
 pub struct Filesystem<S: Storage, const BS: usize> {
@@ -91,7 +91,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
     }
 
     fn trim_offset(&self, offset: usize) -> usize {
-        trim_block_idx(
+        trim_block_idx_with_wraparound(
             offset,
             self.storage.min_block_index(),
             self.storage.max_block_index(),
