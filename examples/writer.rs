@@ -39,7 +39,14 @@ fn main() {
     let begin_block = args.begin_block;
     let end_block = args.end_block;
 
-    let mut storage = match FileStorage::new(args.device, begin_block, end_block, args.block_size) {
+    let retries = Some(5);
+    let mut storage = match FileStorage::new(
+        args.device,
+        begin_block,
+        end_block,
+        args.block_size,
+        retries,
+    ) {
         Ok(s) => s,
         Err(e) => {
             log::error!("Can't create storage: `{:?}`", e);

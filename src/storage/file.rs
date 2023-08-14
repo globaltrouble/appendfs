@@ -9,10 +9,13 @@ use crate::error::Error;
 use crate::storage::Storage;
 use crate::utils::validate_block_index;
 
+const DEFAULT_RETRIES: u16 = 4;
+
 pub struct FileStorage {
     begin_block: u32,
     end_block: u32,
     block_size: u32,
+    retries: u16,
     file: File,
 }
 
@@ -22,6 +25,7 @@ impl FileStorage {
         begin_block: u32,
         end_block: u32,
         block_size: u32,
+        retries: Option<u16>,
     ) -> Result<Self, String> {
         let file = OpenOptions::new()
             .read(true)
@@ -33,6 +37,7 @@ impl FileStorage {
             begin_block,
             end_block,
             block_size,
+            retries: retries.unwrap_or(DEFAULT_RETRIES),
             file,
         })
     }
@@ -52,9 +57,17 @@ impl Storage for FileStorage {
             .map_err(|_e| Error::BlockOutOfRange)?;
 
         let data = &mut data[..self.block_size()];
-        self.file
-            .read_exact(data)
-            .map_err(|_e| Error::CanNotPerformRead)?;
+
+        for i in 0..self.retries {
+            let res = self.file.read_exact(data);
+            if res.is_ok() {
+                break;
+            }
+
+            if i + 1 == self.retries && res.is_err() {
+                return Err(Error::CanNotPerformRead);
+            }
+        }
 
         Ok(self.block_size())
     }
@@ -69,9 +82,17 @@ impl Storage for FileStorage {
         self.file
             .seek(SeekFrom::Start(offset as u64))
             .map_err(|_e| Error::BlockOutOfRange)?;
-        self.file
-            .write_all(data)
-            .map_err(|_e| Error::CanNotPerformWrite)?;
+
+        for i in 0..self.retries {
+            let res = self.file.write_all(data);
+            if res.is_ok() {
+                break;
+            }
+
+            if i + 1 == self.retries && res.is_err() {
+                return Err(Error::CanNotPerformWrite);
+            }
+        }
 
         Ok(self.block_size())
     }
