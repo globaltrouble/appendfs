@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::io::{self, BufRead};
+use std::io::{self, Read};
 
 use clap::Parser;
 
@@ -64,16 +64,16 @@ fn main() {
     let mut buf: VecDeque<u8> = VecDeque::new();
     let mut i = 0;
 
-    for line in stdin.lock().lines() {
-        let line = match line {
-            Ok(v) => v,
+    for byte in stdin.lock().bytes() {
+        let byte = match byte {
+            Ok(b) => b,
             Err(e) => {
                 log::warn!("Can't read from stdin: {:?}", e);
                 break;
             }
         };
 
-        buf.extend(line.as_bytes());
+        buf.push_back(byte);
 
         if buf.len() >= Fs::data_block_size() {
             i += 1;

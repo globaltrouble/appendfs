@@ -35,7 +35,6 @@ cargo test --lib
     ```
 
 ### TODO:
-* do not remove newline symbol in writer
 * retries for file_storage
 * support fs formatting (clear all data)
 * add id to partition id to each block (to handle formatting and overlapping partitions)
