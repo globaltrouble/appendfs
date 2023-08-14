@@ -3,6 +3,7 @@ use std::io::{self, Read};
 
 use clap::Parser;
 
+use appendfs::error::Error as FsError;
 use appendfs::fs::Filesystem;
 use appendfs::storage::file::FileStorage;
 
@@ -11,7 +12,7 @@ const DEFAULT_BEGIN_BLOCK_IDX: u32 = 2048;
 const DEFAULT_END_BLOCK_IDX: u32 = 1024 * 1024 * 1024 * 3 / 512;
 
 // TODO: make block size configurable
-pub type Fs = Filesystem<FileStorage, { DEFAULT_BLOCK_SIZE as usize }>;
+pub type Fs<'a> = Filesystem<'a, FileStorage, { DEFAULT_BLOCK_SIZE as usize }>;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -38,7 +39,7 @@ fn main() {
     let begin_block = args.begin_block;
     let end_block = args.end_block;
 
-    let storage = match FileStorage::new(args.device, begin_block, end_block, args.block_size) {
+    let mut storage = match FileStorage::new(args.device, begin_block, end_block, args.block_size) {
         Ok(s) => s,
         Err(e) => {
             log::error!("Can't create storage: `{:?}`", e);
@@ -46,10 +47,17 @@ fn main() {
         }
     };
 
-    let mut filesystem = match Fs::new(storage) {
+    let mut filesystem = match Fs::restore(&mut storage) {
         Ok(fs) => fs,
+        Err(FsError::InvalidHeaderBlock) => match Fs::new(&mut storage, 42) {
+            Ok(fs) => fs,
+            Err(e) => {
+                log::error!("Can't create new fs, `{:?}`", e);
+                return;
+            }
+        },
         Err(e) => {
-            log::error!("Can't create fs: `{:?}`", e);
+            log::error!("Can't restore fs: `{:?}`", e);
             return;
         }
     };

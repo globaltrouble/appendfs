@@ -1,11 +1,12 @@
-use crate::block::{fields, Block, BlockFactory, BlockInfo, ID};
+use crate::block::{fields, Block, BlockFactory, BlockId, BlockInfo, FsId};
 use crate::error::Error;
 use crate::storage::Storage;
 use crate::utils::trim_block_idx_with_wraparound;
 
 #[derive(Debug)]
-pub struct Filesystem<S: Storage, const BS: usize> {
-    storage: S,
+pub struct Filesystem<'a, S: Storage, const BS: usize> {
+    storage: &'a mut S,
+    id: FsId,
     offset: usize,
     blk_factory: BlockFactory,
     is_empty: bool,
@@ -13,12 +14,14 @@ pub struct Filesystem<S: Storage, const BS: usize> {
     buffer: [u8; BS],
 }
 
-impl<S: Storage, const BS: usize> Filesystem<S, BS> {
+impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
     pub const BLOCK_SIZE: usize = BS;
 
-    pub fn new(storage: S) -> Result<Self, Error> {
+    // will create new filesystem or restore previous in case previous one has the same fs_id
+    pub fn new(storage: &'a mut S, fs_id: FsId) -> Result<Self, Error> {
         let mut fs = Filesystem {
             storage,
+            id: fs_id,
             offset: 0,
             blk_factory: BlockFactory::new(),
             is_empty: true,
@@ -30,15 +33,23 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
         Ok(fs)
     }
 
-    fn init_attrs(&mut self, next_offset: usize, next_id: ID, is_empty: bool, is_full: bool) {
+    /// Restore filesystem from storage, use fs_id from first block as id for the filesystem
+    pub fn restore(storage: &'a mut S) -> Result<Self, Error> {
+        let buf = &mut [0_u8; BS];
+        storage.read(0, buf)?;
+        let info = BlockInfo::<BS>::from_buffer(buf);
+        if !info.is_valid {
+            return Err(Error::InvalidHeaderBlock);
+        }
+
+        Self::new(storage, info.fs_id)
+    }
+
+    fn init_attrs(&mut self, next_offset: usize, next_id: BlockId, is_empty: bool, is_full: bool) {
         self.offset = next_offset;
         self.blk_factory.set_id(next_id);
         self.is_empty = is_empty;
         self.is_full = is_full;
-    }
-
-    pub fn release(self) -> S {
-        self.storage
     }
 
     pub fn append<F>(&mut self, writer: F) -> Result<usize, Error>
@@ -49,7 +60,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
         let data_buf = &mut self.buffer[..blk_len];
         let _ = self
             .blk_factory
-            .create_with_writer::<_, BS>(data_buf, writer);
+            .create_with_writer::<_, BS>(data_buf, self.id, writer);
         self.storage.write(self.offset, data_buf)?;
 
         self.is_empty = false;
@@ -120,7 +131,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
 
         self.storage.read(begin, &mut read_buf[..])?;
         let left_block = BlockInfo::<BS>::from_buffer(read_buf);
-        if !left_block.is_valid {
+        if !left_block.is_valid || left_block.fs_id != self.id {
             // storage wasn't formatted, it is empty, offset is begin
             let is_empty = true;
             let is_full = false;
@@ -132,7 +143,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
 
         self.storage.read(end - 1, &mut read_buf[..])?;
         let mut right_block = BlockInfo::<BS>::from_buffer(read_buf);
-        if right_block.is_valid && right_block.id > left_block.id {
+        if right_block.is_valid && right_block.fs_id == self.id && right_block.id > left_block.id {
             // wraparound is after end, next block to write is begin
             let is_empty = false;
             let is_full = true;
@@ -154,7 +165,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
             self.storage.read(mid, &mut read_buf[..])?;
             let mid_block = BlockInfo::<BS>::from_buffer(read_buf);
 
-            if Self::can_have_tail(&mid_block, &right_block) {
+            if self.can_have_tail(&mid_block, &right_block) {
                 begin = mid;
                 last_id = mid_block.id;
             } else {
@@ -168,7 +179,7 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
         if end - begin == 2 {
             self.storage.read(begin + 1, &mut read_buf[..])?;
             let block_inf = BlockInfo::<BS>::from_buffer(read_buf);
-            if block_inf.is_valid && block_inf.id > last_id {
+            if block_inf.is_valid && block_inf.fs_id == self.id && block_inf.id > last_id {
                 begin += 1;
                 last_id = block_inf.id;
             }
@@ -179,12 +190,12 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
         Ok(())
     }
 
-    fn can_have_tail(left: &BlockInfo<BS>, right: &BlockInfo<BS>) -> bool {
-        if !left.is_valid {
+    fn can_have_tail(&self, left: &BlockInfo<BS>, right: &BlockInfo<BS>) -> bool {
+        if !left.is_valid || left.fs_id != self.id {
             return false;
         }
 
-        if !right.is_valid {
+        if !right.is_valid || right.fs_id != self.id {
             return true;
         }
 
@@ -211,41 +222,45 @@ impl<S: Storage, const BS: usize> Filesystem<S, BS> {
 #[derive(Debug)]
 pub struct FsInitAttrs {
     pub next_offset: usize,
-    pub next_id: ID,
+    pub next_id: BlockId,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BlockInfo, Filesystem};
+    use super::{Block, BlockInfo, Filesystem};
     use crate::block::BlockFactory;
     use crate::error::Error;
     use crate::storage::ram::RamStorage;
     use crate::utils::slices_are_equal;
 
+    const FS_ID: u32 = 522285587;
+
     #[test]
     fn test_fs_init() {
-        const BLOCK_SIZE: usize = 256;
+        const BLOCK_SIZE: usize = 128;
         const BLOCK_COUNT: usize = 512;
         const SIZE: usize = BLOCK_SIZE * BLOCK_COUNT;
 
         type DefaultStorage = RamStorage<SIZE, BLOCK_SIZE>;
-        type Fs = Filesystem<DefaultStorage, BLOCK_SIZE>;
+        type Fs<'a> = Filesystem<'a, DefaultStorage, BLOCK_SIZE>;
 
-        let storage = DefaultStorage::new().expect("Can't create storage for test_fs_full");
+        let mut storage = DefaultStorage::new().expect("Can't create storage for test_fs_full");
 
-        let first_block = BlockInfo::<BLOCK_SIZE>::from_buffer(&storage.data[..BLOCK_SIZE]);
-        assert!(
-            !first_block.is_valid,
-            "First block must not be valid, it contains invalid crc!"
-        );
+        {
+            let first_block = BlockInfo::<BLOCK_SIZE>::from_buffer(&storage.data[..BLOCK_SIZE]);
+            assert!(
+                !first_block.is_valid,
+                "First block must not be valid, it contains invalid crc!"
+            );
+        }
 
-        let fs = Fs::new(storage).expect("Can't create fs for test_fs_empty");
-        assert_eq!(
-            fs.offset, 0,
-            "Storage was not initialized, offset must be eq to 0"
-        );
-
-        let mut storage = fs.release();
+        {
+            let fs = Fs::new(&mut storage, FS_ID).expect("Can't create fs for test_fs_empty");
+            assert_eq!(
+                fs.offset, 0,
+                "Storage was not initialized, offset must be eq to 0"
+            );
+        }
 
         let begin_id = 42;
         let mut factory = BlockFactory::new();
@@ -266,19 +281,62 @@ mod tests {
 
             let blk = factory.create_with_writer::<_, BLOCK_SIZE>(
                 &mut storage.data[begin..end],
+                FS_ID,
                 &mut fill_block,
             );
 
             let cur_id = begin_id + i as u64;
             assert_eq!(blk.id(), cur_id);
 
-            let fs = Fs::new(storage).expect("Can't create fs for test_fs_full");
-            let expected_offset = (i + 1) % BLOCK_COUNT;
-            assert_eq!(fs.offset, expected_offset);
+            {
+                let fs = Fs::new(&mut storage, FS_ID).expect("Can't create fs for test_fs_full");
+                let expected_offset = (i + 1) % BLOCK_COUNT;
+                assert_eq!(fs.offset, expected_offset);
 
-            assert_eq!(fs.blk_factory.id, cur_id + 1);
+                assert_eq!(fs.blk_factory.id, cur_id + 1);
+            }
+        }
 
-            storage = fs.release();
+        const NEW_BLOCKS: usize = 35;
+        const NEW_FS_ID: u32 = 1585159336;
+
+        // init new blocks with new fs id
+        for b in 0..NEW_BLOCKS {
+            let begin = b * BLOCK_SIZE;
+            let end = begin + BLOCK_SIZE;
+            let block_data = &mut storage.data[begin..end];
+            // write different fs id to first blocks
+            Block::<'_, 256>::set_fs_id(block_data, NEW_FS_ID);
+            Block::<'_, 256>::set_crc(block_data);
+        }
+
+        // validate storage blockes were actually initialized and they are valid
+        for b in 0..BLOCK_COUNT {
+            let begin = b * BLOCK_SIZE;
+            let end = begin + BLOCK_SIZE;
+            let block = BlockInfo::<BLOCK_SIZE>::from_buffer(&storage.data[begin..end]);
+            // let first_block = BlockInfo::<BLOCK_SIZE>::from_buffer();
+            assert!(block.is_valid, "Block {} must be valid after write!", b);
+
+            if b < NEW_BLOCKS {
+                assert_eq!(
+                    block.fs_id, NEW_FS_ID,
+                    "First blocks must be init with new fs id"
+                );
+            } else {
+                assert_eq!(
+                    block.fs_id, FS_ID,
+                    "Last blocks must be init with old fs id"
+                );
+            }
+        }
+
+        {
+            let fs = Fs::new(&mut storage, NEW_FS_ID).expect("Can't create fs for new blocks");
+            assert_eq!(
+                fs.offset, NEW_BLOCKS,
+                "Storage was initialized, offset must be after last new block, old blocks must be skipped during fs init"
+            );
         }
     }
 
@@ -289,7 +347,7 @@ mod tests {
         const SIZE: usize = BLOCK_SIZE * BLOCK_COUNT;
 
         type DefaultStorage = RamStorage<SIZE, BLOCK_SIZE>;
-        type Fs = Filesystem<DefaultStorage, BLOCK_SIZE>;
+        type Fs<'a> = Filesystem<'a, DefaultStorage, BLOCK_SIZE>;
 
         const DATA_SIZE: usize = Fs::data_block_size();
 
@@ -304,7 +362,7 @@ mod tests {
             let mut expected_data = [0_u8; DATA_SIZE];
             expected_data.copy_from_slice(&storage.data[begin..end]);
 
-            let mut fs = Fs::new(storage).expect("Can't create fs for test_fs_full");
+            let mut fs = Fs::new(&mut storage, FS_ID).expect("Can't create fs for test_fs_full");
 
             if i == 0 {
                 assert!(fs.is_empty(), "Before first write fs must be empty!");
@@ -401,8 +459,6 @@ mod tests {
                 i,
                 read_after
             );
-
-            storage = fs.release();
         }
     }
 }

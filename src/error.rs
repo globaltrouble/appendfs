@@ -9,4 +9,5 @@ pub enum Error {
     CanNotPerformRead,
     CanNotPerformWrite,
     NotValidBlock,
+    InvalidHeaderBlock,
 }

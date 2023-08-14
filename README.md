@@ -36,8 +36,6 @@ cargo test --lib
 
 ### TODO:
 * retries for file_storage
-* support fs formatting (clear all data)
-* add id to partition id to each block (to handle formatting and overlapping partitions)
 * add first superblock with fs attributes (version)
 * add config support (single block, its offset can be tracked in each block)
 * add persistent blocks (will be not overwritten, only with force flag) to store critical events
