@@ -56,7 +56,7 @@ fn main() {
     let mut filesystem = match Fs::restore(&mut storage) {
         Ok(fs) => fs,
         Err(e) => {
-            log::error!("Can't create fs: `{:?}`", e);
+            log::error!("Can't restore fs: `{:?}`", e);
             return;
         }
     };

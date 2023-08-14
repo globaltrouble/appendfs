@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::io::{self, Read};
 
 use clap::Parser;
+use rand::Rng;
 
 use appendfs::error::Error as FsError;
 use appendfs::fs::Filesystem;
@@ -56,7 +57,7 @@ fn main() {
 
     let mut filesystem = match Fs::restore(&mut storage) {
         Ok(fs) => fs,
-        Err(FsError::InvalidHeaderBlock) => match Fs::new(&mut storage, 42) {
+        Err(FsError::InvalidHeaderBlock) => match Fs::new(&mut storage, rand::thread_rng().gen::<u32>()) {
             Ok(fs) => fs,
             Err(e) => {
                 log::error!("Can't create new fs, `{:?}`", e);
