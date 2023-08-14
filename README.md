@@ -39,5 +39,6 @@ cargo test --lib
 * add first superblock with fs attributes (version)
 * add config support (single block, its offset can be tracked in each block)
 * add persistent blocks (will be not overwritten, only with force flag) to store critical events
+* test with example reader and example writer
 * release embedded hal sd_card storage
 * retries for embedded hal sd_card storage
