@@ -40,4 +40,3 @@ cargo test --lib
 * add persistent blocks (will be not overwritten, only with force flag) to store critical events
 * test with example reader and example writer
 * release embedded hal sd_card storage
-* retries for embedded hal sd_card storage
