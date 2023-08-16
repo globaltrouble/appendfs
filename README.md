@@ -35,9 +35,12 @@ cargo test --lib
     ```
 
 ### TODO:
+* add first superblock with fs attributes (version)
 * add example for formatting only
 * test with example reader and example writer
-* add first superblock with fs attributes (version)
+* review and refactor errors
+* add decorator storage with io retries
+* add decorator storage with redundancy coding
 * add config support (single block, its offset can be tracked in each block)
 * add persistent blocks (will be not overwritten, only with force flag) to store critical events
 * release embedded hal sd_card storage

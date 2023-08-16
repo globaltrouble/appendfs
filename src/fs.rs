@@ -45,7 +45,13 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         Self::new(storage, info.fs_id)
     }
 
-    fn init_attrs(&mut self, next_offset: usize, next_id: BlockId, is_empty: bool, is_full: bool) {
+    fn setup_attributes(
+        &mut self,
+        next_offset: usize,
+        next_id: BlockId,
+        is_empty: bool,
+        is_full: bool,
+    ) {
         self.offset = next_offset;
         self.blk_factory.set_id(next_id);
         self.is_empty = is_empty;
@@ -61,8 +67,8 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         let _ = self
             .blk_factory
             .create_with_writer::<_, BS>(data_buf, self.id, writer);
-        self.storage.write(self.offset, data_buf)?;
 
+        self.storage.write(self.offset, data_buf)?;
         self.is_empty = false;
         if self.offset == self.storage.max_block_index() - 1 {
             self.is_full = true;
@@ -84,7 +90,7 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         let base_offset = if self.is_full() {
             self.offset + blk_offset
         } else {
-            self.storage.min_block_index() + blk_offset
+            self.data_blk_offset() + blk_offset
         };
 
         let offset = self.trim_offset(base_offset);
@@ -107,13 +113,18 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
     }
 
     pub fn incr_offset(&mut self) {
-        self.offset = self.trim_offset(self.offset + 1)
+        self.offset = self.trim_offset(self.offset + 1);
+    }
+
+    fn data_blk_offset(&self) -> usize {
+        // first block is FS config, so add 1
+        self.storage.min_block_index() + 1
     }
 
     fn trim_offset(&self, offset: usize) -> usize {
         trim_block_idx_with_wraparound(
             offset,
-            self.storage.min_block_index(),
+            self.data_blk_offset(),
             self.storage.max_block_index(),
         )
     }
@@ -129,13 +140,27 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
             return Err(Error::TooSmallFilesystem);
         }
 
+        {
+            self.storage.read(begin, &mut read_buf[..])?;
+            let left_block = BlockInfo::<BS>::from_buffer(read_buf);
+            if !left_block.is_valid || left_block.fs_id != self.id {
+                // storage wasn't formatted, it is empty, offset is begin
+                let is_empty = true;
+                let is_full = false;
+                self.write_config(begin)?;
+                self.setup_attributes(begin + 1, 0, is_empty, is_full);
+                return Ok(());
+            }
+        }
+
+        begin += 1;
         self.storage.read(begin, &mut read_buf[..])?;
         let left_block = BlockInfo::<BS>::from_buffer(read_buf);
         if !left_block.is_valid || left_block.fs_id != self.id {
-            // storage wasn't formatted, it is empty, offset is begin
+            // storage was formatted, but first block was not written, it is empty, offset is begin
             let is_empty = true;
             let is_full = false;
-            self.init_attrs(begin, 0, is_empty, is_full);
+            self.setup_attributes(begin, 0, is_empty, is_full);
             return Ok(());
         }
         // as first block is valid is can't be empty
@@ -147,7 +172,7 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
             // wraparound is after end, next block to write is begin
             let is_empty = false;
             let is_full = true;
-            self.init_attrs(begin, right_block.id + 1, is_empty, is_full);
+            self.setup_attributes(begin, right_block.id + 1, is_empty, is_full);
             return Ok(());
         }
 
@@ -186,7 +211,7 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         }
 
         // begin will be last value before wraparound
-        self.init_attrs(begin + 1, last_id + 1, is_empty, is_full);
+        self.setup_attributes(begin + 1, last_id + 1, is_empty, is_full);
         Ok(())
     }
 
@@ -200,6 +225,30 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         }
 
         left.id > right.id
+    }
+
+    fn write_config(&mut self, blk_idx: usize) -> Result<(), Error> {
+        let mut config_was_not_written = false;
+        let data_buf = &mut [0_u8; BS];
+        let _ = self
+            .blk_factory
+            .create_with_writer::<_, BS>(data_buf, self.id, |block_data| {
+                let config = config_block::FsConfigBlock::new();
+                let config_data = config_block::FsConfigBlock::to_be_bytes(&config);
+                // TODO: add error when data.len() > block_data.len()
+                let to_copy = core::cmp::min(config_data.len(), block_data.len());
+                if to_copy != config_data.len() {
+                    config_was_not_written = true;
+                }
+                block_data[..to_copy].copy_from_slice(&config_data[..to_copy]);
+            });
+        self.storage.write(blk_idx, data_buf)?;
+
+        if config_was_not_written {
+            return Err(Error::NotValidBlock);
+        }
+
+        Ok(())
     }
 
     pub fn offset(&self) -> usize {
@@ -225,6 +274,78 @@ pub struct FsInitAttrs {
     pub next_id: BlockId,
 }
 
+pub mod config_block {
+
+    /// To add new field:
+    /// - add ${FIELD}_BEGIN, ${FIELD}_LEN, ${FIELD}_END, constants
+    /// - possible change BLOCK_END constant in case this field will be last one
+    /// - implement method write_${field} for FsConfigBlock, see `write_version` as an example
+    /// - call `write_${field}` method in `to_be_bytes`
+    /// - implement method read_${field} for FsConfigBlock, see `read_version` as an example
+    /// - call `read_${field}` method in `from_be_bytes`
+
+    pub type Version = u32;
+
+    // add mapping to map FS_VERSION to package version (detect braking changes)
+    pub const FS_VERSION: Version = 0x1;
+
+    pub(crate) const BLOCK_BEGIN: usize = 0;
+
+    pub(crate) const VERSION_BEGIN: usize = BLOCK_BEGIN;
+    pub(crate) const VERSION_LEN: usize = core::mem::size_of::<Version>();
+    pub(crate) const VERSION_END: usize = VERSION_BEGIN + VERSION_LEN;
+
+    pub(crate) const BLOCK_END: usize = VERSION_END;
+    pub(crate) const BLOCK_LEN: usize = BLOCK_END - BLOCK_BEGIN;
+
+    #[derive(Debug)]
+    pub struct FsConfigBlock {
+        pub version: Version,
+    }
+
+    impl FsConfigBlock {
+        pub fn new() -> FsConfigBlock {
+            FsConfigBlock {
+                version: FS_VERSION,
+            }
+        }
+
+        /// Can be as member method
+        /// implemented it as non member method to be aligned with to_be_bytes method in other types
+        pub fn to_be_bytes(config: &FsConfigBlock) -> [u8; BLOCK_LEN] {
+            let mut buf = [0_u8; BLOCK_LEN];
+
+            config.write_version(&mut buf);
+
+            buf
+        }
+
+        fn write_version(&self, buf: &mut [u8; BLOCK_LEN]) {
+            let version = self.version.to_be_bytes();
+            buf[VERSION_BEGIN..VERSION_END].copy_from_slice(&version[..]);
+        }
+
+        pub fn from_be_bytes(block: [u8; BLOCK_LEN]) {
+            let mut config: FsConfigBlock = FsConfigBlock::default();
+            config.read_version(&block);
+        }
+
+        fn read_version(&mut self, block: &[u8; BLOCK_LEN]) {
+            let mut buf = [0_u8; VERSION_LEN];
+            buf[..].copy_from_slice(&block[VERSION_BEGIN..VERSION_END]);
+            self.version = Version::from_be_bytes(buf);
+        }
+    }
+
+    impl Default for FsConfigBlock {
+        fn default() -> Self {
+            FsConfigBlock {
+                version: Version::default(),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Block, BlockInfo, Filesystem};
@@ -240,6 +361,9 @@ mod tests {
         const BLOCK_SIZE: usize = 128;
         const BLOCK_COUNT: usize = 512;
         const SIZE: usize = BLOCK_SIZE * BLOCK_COUNT;
+        // first block is fs config block
+        const AVAILABLE_BLOCK_COUNT: usize = BLOCK_COUNT - 1;
+        const AVAILABLE_SIZE: usize = BLOCK_SIZE * AVAILABLE_BLOCK_COUNT;
 
         type DefaultStorage = RamStorage<SIZE, BLOCK_SIZE>;
         type Fs<'a> = Filesystem<'a, DefaultStorage, BLOCK_SIZE>;
@@ -257,8 +381,8 @@ mod tests {
         {
             let fs = Fs::new(&mut storage, FS_ID).expect("Can't create fs for test_fs_empty");
             assert_eq!(
-                fs.offset, 0,
-                "Storage was not initialized, offset must be eq to 0"
+                fs.offset, 1,
+                "Storage has no writes, offset must be eq to 1 (0 is config block, next is 1)"
             );
         }
 
@@ -273,10 +397,11 @@ mod tests {
         };
 
         // fill n-th block,
-        // first BLOCK_COUNT iterations test offset initialization for not full storage.
-        // next 2 * BLOCK_COUNT iterations test offset initialization for full storage after wraparound
-        for i in 0..BLOCK_COUNT * 3 {
-            let begin = (i * BLOCK_SIZE) % SIZE;
+        // first AVAILABLE_BLOCK_COUNT iterations test offset initialization for not full storage.
+        // next 2 * AVAILABLE_BLOCK_COUNT iterations test offset initialization for full storage after wraparound
+        for i in 0..AVAILABLE_BLOCK_COUNT * 3 {
+            // first block is fs config block, so add 1 block offset
+            let begin = (i * BLOCK_SIZE) % AVAILABLE_SIZE + 1 * BLOCK_SIZE;
             let end = begin + BLOCK_SIZE;
 
             let blk = factory.create_with_writer::<_, BLOCK_SIZE>(
@@ -290,7 +415,8 @@ mod tests {
 
             {
                 let fs = Fs::new(&mut storage, FS_ID).expect("Can't create fs for test_fs_full");
-                let expected_offset = (i + 1) % BLOCK_COUNT;
+                // first block is skipped so always add 1 to expected offset
+                let expected_offset = 1 + (i + 1) % AVAILABLE_BLOCK_COUNT;
                 assert_eq!(fs.offset, expected_offset);
 
                 assert_eq!(fs.blk_factory.id, cur_id + 1);
@@ -311,7 +437,7 @@ mod tests {
         }
 
         // validate storage blockes were actually initialized and they are valid
-        for b in 0..BLOCK_COUNT {
+        for b in 0..AVAILABLE_BLOCK_COUNT {
             let begin = b * BLOCK_SIZE;
             let end = begin + BLOCK_SIZE;
             let block = BlockInfo::<BLOCK_SIZE>::from_buffer(&storage.data[begin..end]);
@@ -345,6 +471,9 @@ mod tests {
         const BLOCK_SIZE: usize = 128;
         const BLOCK_COUNT: usize = 80;
         const SIZE: usize = BLOCK_SIZE * BLOCK_COUNT;
+        // first block is fs config block
+        const AVAILABLE_BLOCK_COUNT: usize = BLOCK_COUNT - 1;
+        const AVAILABLE_SIZE: usize = BLOCK_SIZE * AVAILABLE_BLOCK_COUNT;
 
         type DefaultStorage = RamStorage<SIZE, BLOCK_SIZE>;
         type Fs<'a> = Filesystem<'a, DefaultStorage, BLOCK_SIZE>;
@@ -356,8 +485,9 @@ mod tests {
         // write n-th block,
         // first BLOCK_COUNT iterations test IO for not full storage.
         // next 2 * BLOCK_COUNT iterations test IO for full storage after wraparound
-        for i in 0..BLOCK_COUNT * 3 {
-            let end = (i * BLOCK_SIZE) % SIZE + BLOCK_SIZE;
+        for i in 0..AVAILABLE_BLOCK_COUNT * 3 {
+            // first block is fs config block, so add 1 block offset, to get block end add additional 1 block offset
+            let end = (i * BLOCK_SIZE) % AVAILABLE_SIZE + 2 * BLOCK_SIZE;
             let begin = end - DATA_SIZE;
             let mut expected_data = [0_u8; DATA_SIZE];
             expected_data.copy_from_slice(&storage.data[begin..end]);
@@ -374,22 +504,22 @@ mod tests {
                 );
             }
 
-            if i < BLOCK_COUNT {
+            if i < AVAILABLE_BLOCK_COUNT {
                 assert!(
                     !fs.is_full(),
-                    "Fs can't be full before BLOCK_COUNT writes, i: {}",
+                    "Fs can't be full before AVAILABLE_BLOCK_COUNT writes, i: {}",
                     i
                 );
             } else {
                 assert!(
                     fs.is_full(),
-                    "Fs must be full after BLOCK_COUNT writes, i: {}",
+                    "Fs must be full after AVAILABLE_BLOCK_COUNT writes, i: {}",
                     i
                 );
             }
 
             // read the oldest block, that will be overwritten
-            let blk_offset = if i >= BLOCK_COUNT { 0 } else { i };
+            let blk_offset = if i >= AVAILABLE_BLOCK_COUNT { 0 } else { i };
             let read_before = fs.read(blk_offset, |blk_data| {
                 assert!(
                     slices_are_equal(&expected_data[..], &blk_data[..]),
@@ -403,14 +533,14 @@ mod tests {
             match read_before {
                 Ok(_) => {
                     assert!(
-                        i >= BLOCK_COUNT,
+                        i >= AVAILABLE_BLOCK_COUNT,
                         "Data must be read only after wraparound, i: {}",
                         i
                     );
                 }
                 Err(Error::NotValidBlock) => {
                     assert!(
-                        i < BLOCK_COUNT,
+                        i < AVAILABLE_BLOCK_COUNT,
                         "Data must not be read before wraparound, i: {}",
                         i
                     );
@@ -437,12 +567,13 @@ mod tests {
 
             expected_data.fill(fill_value);
 
-            let blk_offset = if i >= BLOCK_COUNT - 1 {
-                assert!(fs.is_full(), "Fs must be full after write {}", i);
-                BLOCK_COUNT - 1
-            } else {
+            const LAST_WRITE_BEFORE_FS_BECOME_FULL: usize = AVAILABLE_BLOCK_COUNT - 1;
+            let blk_offset = if i < LAST_WRITE_BEFORE_FS_BECOME_FULL {
                 assert!(!fs.is_full(), "Fs must not be full after write {}", i);
                 i
+            } else {
+                assert!(fs.is_full(), "Fs must be full after write {}", i);
+                AVAILABLE_BLOCK_COUNT - 1
             };
             let read_after = fs.read(blk_offset, |blk_data| {
                 assert!(

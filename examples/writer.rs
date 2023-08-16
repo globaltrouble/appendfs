@@ -57,13 +57,15 @@ fn main() {
 
     let mut filesystem = match Fs::restore(&mut storage) {
         Ok(fs) => fs,
-        Err(FsError::InvalidHeaderBlock) => match Fs::new(&mut storage, rand::thread_rng().gen::<u32>()) {
-            Ok(fs) => fs,
-            Err(e) => {
-                log::error!("Can't create new fs, `{:?}`", e);
-                return;
+        Err(FsError::InvalidHeaderBlock) => {
+            match Fs::new(&mut storage, rand::thread_rng().gen::<u32>()) {
+                Ok(fs) => fs,
+                Err(e) => {
+                    log::error!("Can't create new fs, `{:?}`", e);
+                    return;
+                }
             }
-        },
+        }
         Err(e) => {
             log::error!("Can't restore fs: `{:?}`", e);
             return;
