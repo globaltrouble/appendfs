@@ -64,9 +64,10 @@ fn main() {
 
     log!(
         info,
-        "Init filesystem, offset: {:?}, next_id: {:?}",
+        "Init filesystem, offset: {}, id: {}, next_blk_id: {}",
         filesystem.offset(),
-        filesystem.next_id()
+        filesystem.id(),
+        filesystem.next_blk_id()
     );
 
     if filesystem.is_empty() {

@@ -7,7 +7,7 @@ use rand::Rng;
 use appendfs::error::Error as FsError;
 use appendfs::fs::Filesystem;
 use appendfs::log;
-use appendfs::storage::file::FileStorage;
+use appendfs::storage::{file::FileStorage, Storage};
 
 const DEFAULT_BLOCK_SIZE: u32 = 512;
 const DEFAULT_BEGIN_BLOCK_IDX: u32 = 2048;
@@ -30,6 +30,9 @@ struct Args {
 
     #[arg(long, default_value_t = DEFAULT_BLOCK_SIZE )]
     block_size: u32,
+
+    #[arg(short, long, default_value_t = false)]
+    format_only: bool,
 }
 
 fn main() {
@@ -56,6 +59,31 @@ fn main() {
         }
     };
 
+    if args.format_only {
+        let mut header_block = Vec::with_capacity(args.block_size as usize);
+        header_block.resize(args.block_size as usize, 0);
+        let res = storage.write(begin_block as usize, &mut header_block[..]);
+        if res.is_err() {
+            log!(error, "Can't format header, err: {:?}", res);
+        }
+
+        match Fs::new(&mut storage, rand::thread_rng().gen::<u32>()) {
+            Ok(fs) => {
+                log!(
+                    info,
+                    "Successfully formatted storage, offset: {}, id: {}, next_blk_id: {}",
+                    fs.offset(),
+                    fs.id(),
+                    fs.next_blk_id()
+                );
+            }
+            Err(e) => {
+                log!(error, "Can't format storage, err: {:?}", e);
+            }
+        }
+        return;
+    }
+
     let mut filesystem = match Fs::restore(&mut storage) {
         Ok(fs) => fs,
         Err(FsError::InvalidHeaderBlock) => {
@@ -76,9 +104,10 @@ fn main() {
 
     log!(
         info,
-        "Init filesystem, offset: {:?}, next_id: {:?}",
+        "Init filesystem, offset: {}, id: {}, next_blk_id: {}",
         filesystem.offset(),
-        filesystem.next_id()
+        filesystem.id(),
+        filesystem.next_blk_id()
     );
 
     let stdin = io::stdin();

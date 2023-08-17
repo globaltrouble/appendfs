@@ -6,6 +6,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::string::{String, ToString};
 
 use crate::error::Error;
+use crate::log;
 use crate::storage::Storage;
 use crate::utils::validate_block_index;
 
@@ -57,7 +58,6 @@ impl Storage for FileStorage {
             .map_err(|_e| Error::CanNotSeekForRead)?;
 
         let data = &mut data[..self.block_size()];
-
         for i in 0..self.retries {
             let res = self.file.read_exact(data);
             if res.is_ok() {
@@ -65,6 +65,13 @@ impl Storage for FileStorage {
             }
 
             if i + 1 == self.retries && res.is_err() {
+                log!(
+                    error,
+                    "Can't perform read, offset: {}, data_len: {}, err: {:?}",
+                    offset,
+                    data.len(),
+                    res
+                );
                 return Err(Error::CanNotPerformRead);
             }
         }

@@ -286,8 +286,12 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         self.offset
     }
 
-    pub fn next_id(&self) -> u64 {
+    pub fn next_blk_id(&self) -> BlockId {
         self.blk_factory.id
+    }
+
+    pub fn id(&self) -> FsId {
+        self.id
     }
 
     pub fn is_empty(&self) -> bool {
