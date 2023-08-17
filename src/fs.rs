@@ -36,7 +36,8 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
     /// Restore filesystem from storage, use fs_id from first block as id for the filesystem
     pub fn restore(storage: &'a mut S) -> Result<Self, Error> {
         let buf = &mut [0_u8; BS];
-        storage.read(0, buf)?;
+        let first_block = storage.min_block_index();
+        storage.read(first_block, buf)?;
         let info = BlockInfo::<BS>::from_buffer(buf);
         if !info.is_valid {
             return Err(Error::InvalidHeaderBlock);
