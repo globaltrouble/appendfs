@@ -4,6 +4,7 @@ use clap::Parser;
 
 use appendfs::error::Error as FsError;
 use appendfs::fs::Filesystem;
+use appendfs::log;
 use appendfs::storage::file::FileStorage;
 
 const DEFAULT_BLOCK_SIZE: u32 = 512;
@@ -33,7 +34,7 @@ fn main() {
     env_logger::init();
 
     let args = Args::parse();
-    log::info!("Reading from device: {}", &args.device);
+    log!(info, "Reading from file: {}", &args.device);
 
     let begin_block = args.begin_block;
     let end_block = args.end_block;
@@ -48,7 +49,7 @@ fn main() {
     ) {
         Ok(s) => s,
         Err(e) => {
-            log::error!("Can't create storage: `{:?}`", e);
+            log!(error, "Can't create storage: `{:?}`", e);
             return;
         }
     };
@@ -56,15 +57,16 @@ fn main() {
     let mut filesystem = match Fs::restore(&mut storage) {
         Ok(fs) => fs,
         Err(e) => {
-            log::error!("Can't restore fs: `{:?}`", e);
+            log!(error, "Can't restore fs: `{:?}`", e);
             return;
         }
     };
 
-    log::info!(
+    log!(
+        info,
         "Init filesystem, offset: {:?}, next_id: {:?}",
         filesystem.offset(),
-        filesystem.next_id(),
+        filesystem.next_id()
     );
 
     if filesystem.is_empty() {
@@ -79,7 +81,8 @@ fn main() {
         filesystem.offset()
     };
 
-    log::info!(
+    log!(
+        info,
         "Reading from {} to {} (used={}), base is: {}",
         begin_block,
         end_block,
@@ -89,13 +92,14 @@ fn main() {
 
     for offset in 0..used {
         let read = filesystem.read(offset as usize, |blk_data| {
-            log::info!("Reading offste: {} ...", offset);
+            log!(info, "Reading offste: {} ...", offset);
             {
                 let mut handle = io::stdout().lock();
                 match handle.write_all(blk_data) {
                     Ok(_) => {}
                     Err(e) => {
-                        log::error!(
+                        log!(
+                            error,
                             "Can't write block base_offset: {}, offste: {}, error: {:?}",
                             base_offset,
                             offset,
@@ -108,11 +112,12 @@ fn main() {
         match read {
             Ok(_) => {}
             Err(FsError::NotValidBlock) => {
-                log::info!("Finish reading at: {}", offset);
+                log!(info, "Finish reading at: {}", offset);
                 break;
             }
             Err(e) => {
-                log::error!(
+                log!(
+                    error,
                     "Error read block, base_offset: {}, offset: {}, e: {:?}",
                     base_offset,
                     offset,

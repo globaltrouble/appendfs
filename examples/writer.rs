@@ -6,6 +6,7 @@ use rand::Rng;
 
 use appendfs::error::Error as FsError;
 use appendfs::fs::Filesystem;
+use appendfs::log;
 use appendfs::storage::file::FileStorage;
 
 const DEFAULT_BLOCK_SIZE: u32 = 512;
@@ -35,7 +36,7 @@ fn main() {
     env_logger::init();
 
     let args = Args::parse();
-    log::info!("Reading from device: {}", &args.device);
+    log!(info, "Writing to file: {}", &args.device);
 
     let begin_block = args.begin_block;
     let end_block = args.end_block;
@@ -50,7 +51,7 @@ fn main() {
     ) {
         Ok(s) => s,
         Err(e) => {
-            log::error!("Can't create storage: `{:?}`", e);
+            log!(error, "Can't create storage: `{:?}`", e);
             return;
         }
     };
@@ -58,24 +59,26 @@ fn main() {
     let mut filesystem = match Fs::restore(&mut storage) {
         Ok(fs) => fs,
         Err(FsError::InvalidHeaderBlock) => {
+            log!(info, "Fs can't be restored, creating new one");
             match Fs::new(&mut storage, rand::thread_rng().gen::<u32>()) {
                 Ok(fs) => fs,
                 Err(e) => {
-                    log::error!("Can't create new fs, `{:?}`", e);
+                    log!(error, "Can't create new fs, `{:?}`", e);
                     return;
                 }
             }
         }
         Err(e) => {
-            log::error!("Can't restore fs: `{:?}`", e);
+            log!(error, "Can't restore fs: `{:?}`", e);
             return;
         }
     };
 
-    log::info!(
+    log!(
+        info,
         "Init filesystem, offset: {:?}, next_id: {:?}",
         filesystem.offset(),
-        filesystem.next_id(),
+        filesystem.next_id()
     );
 
     let stdin = io::stdin();
@@ -109,10 +112,10 @@ fn main() {
 
             match written {
                 Ok(size) => {
-                    log::info!("Written block: {}, size: {}", i, size);
+                    log!(info, "Written block: {}, size: {}", i, size);
                 }
                 Err(e) => {
-                    log::info!("Error write block: {}, {:?}", i, e);
+                    log!(info, "Error write block: {}, {:?}", i, e);
                 }
             }
         }
@@ -132,10 +135,10 @@ fn main() {
 
         match written {
             Ok(size) => {
-                log::info!("Written block: {}, size: {}", i, size);
+                log!(info, "Written block: {}, size: {}", i, size);
             }
             Err(e) => {
-                log::info!("Error write block: {}, {:?}", i, e);
+                log!(info, "Error write block: {}, {:?}", i, e);
             }
         }
     }

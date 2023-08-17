@@ -1,5 +1,6 @@
 use crate::block::{fields, Block, BlockFactory, BlockId, BlockInfo, FsId};
 use crate::error::Error;
+use crate::logging::log;
 use crate::storage::Storage;
 use crate::utils::trim_block_idx_with_wraparound;
 
@@ -42,7 +43,7 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         if !info.is_valid {
             return Err(Error::InvalidHeaderBlock);
         }
-
+        log!(trace, "Restore storage with fs is: {}", info.fs_id);
         Self::new(storage, info.fs_id)
     }
 
@@ -53,6 +54,14 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         is_empty: bool,
         is_full: bool,
     ) {
+        log!(
+            debug,
+            "Setup fs attributes, offset: {:?}, block_id: {:?}, is_empty: {:?}, is_full: {:?}",
+            next_offset,
+            next_id,
+            is_empty,
+            is_full
+        );
         self.offset = next_offset;
         self.blk_factory.set_id(next_id);
         self.is_empty = is_empty;
@@ -69,13 +78,16 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
             .blk_factory
             .create_with_writer::<_, BS>(data_buf, self.id, writer);
 
+        log!(trace, "Appending to offset: {}", self.offset);
         self.storage.write(self.offset, data_buf)?;
         self.is_empty = false;
         if self.offset == self.storage.max_block_index() - 1 {
+            log!(trace, "Fs is full, next write will overwrite old data");
             self.is_full = true;
         }
 
         self.incr_offset();
+        log!(trace, "Offset changed to {}", self.offset);
 
         Ok(Self::data_block_size())
     }
@@ -89,19 +101,27 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         // in case storage is full, next offset will be position of oldest write
         // in case storage is NOT full, first block will be position of oldest write
         let base_offset = if self.is_full() {
-            self.offset + blk_offset
+            let base = self.offset + blk_offset;
+            log!(trace, "Read from full storage with base offset: {}", base);
+            base
         } else {
-            self.data_blk_offset() + blk_offset
+            let base = self.data_blk_offset() + blk_offset;
+            log!(trace, "Read from empty storage with base offset: {}", base);
+            base
         };
 
         let offset = self.trim_offset(base_offset);
+
         let blk_len = self.storage.block_size();
         let data_buf = &mut self.buffer[..blk_len];
+
+        log!(trace, "Read (trimmed) offset {}", offset);
         self.storage.read(offset, data_buf)?;
 
         {
             let block = Block::<BS>::from_buffer(data_buf);
             if !block.is_valid() {
+                log!(debug, "Block at {} is invalid", offset);
                 return Err(Error::NotValidBlock);
             }
         }
@@ -137,6 +157,8 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
 
         let mut begin = self.storage.min_block_index();
         let mut end = self.storage.max_block_index();
+
+        log!(debug, "Init storage with begin: {}, end: {}", begin, end);
         if begin > usize::MAX - 2 || end < begin + 2 {
             return Err(Error::TooSmallFilesystem);
         }
@@ -146,6 +168,7 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
             let left_block = BlockInfo::<BS>::from_buffer(read_buf);
             if !left_block.is_valid || left_block.fs_id != self.id {
                 // storage wasn't formatted, it is empty, offset is begin
+                log!(debug, "Storage was not formatted. Making empty one");
                 let is_empty = true;
                 let is_full = false;
                 self.write_config(begin)?;
@@ -159,6 +182,10 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         let left_block = BlockInfo::<BS>::from_buffer(read_buf);
         if !left_block.is_valid || left_block.fs_id != self.id {
             // storage was formatted, but first block was not written, it is empty, offset is begin
+            log!(
+                debug,
+                "Storage was formatted, but first block is not valid. Treat it as empty storage"
+            );
             let is_empty = true;
             let is_full = false;
             self.setup_attributes(begin, 0, is_empty, is_full);
@@ -171,6 +198,7 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         let mut right_block = BlockInfo::<BS>::from_buffer(read_buf);
         if right_block.is_valid && right_block.fs_id == self.id && right_block.id > left_block.id {
             // wraparound is after end, next block to write is begin
+            log!(debug, "Storage is full, wraparound is after last block, next block is first storage block");
             let is_empty = false;
             let is_full = true;
             self.setup_attributes(begin, right_block.id + 1, is_empty, is_full);
@@ -190,6 +218,7 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
 
             self.storage.read(mid, &mut read_buf[..])?;
             let mid_block = BlockInfo::<BS>::from_buffer(read_buf);
+            log!(trace, "Mid: {:?}, right: {:?}", &mid_block, right_block);
 
             if self.can_have_tail(&mid_block, &right_block) {
                 begin = mid;
@@ -205,6 +234,7 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         if end - begin == 2 {
             self.storage.read(begin + 1, &mut read_buf[..])?;
             let block_inf = BlockInfo::<BS>::from_buffer(read_buf);
+            log!(trace, "Possible right block: {:?}", &block_inf);
             if block_inf.is_valid && block_inf.fs_id == self.id && block_inf.id > last_id {
                 begin += 1;
                 last_id = block_inf.id;
@@ -359,6 +389,8 @@ mod tests {
 
     #[test]
     fn test_fs_init() {
+        crate::logging::init();
+
         const BLOCK_SIZE: usize = 128;
         const BLOCK_COUNT: usize = 512;
         const SIZE: usize = BLOCK_SIZE * BLOCK_COUNT;
@@ -469,6 +501,8 @@ mod tests {
 
     #[test]
     fn test_fs_io() {
+        crate::logging::init();
+
         const BLOCK_SIZE: usize = 128;
         const BLOCK_COUNT: usize = 80;
         const SIZE: usize = BLOCK_SIZE * BLOCK_COUNT;
