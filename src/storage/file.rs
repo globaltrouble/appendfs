@@ -48,13 +48,13 @@ impl Storage for FileStorage {
         validate_block_index(self, blk_idx)?;
 
         if data.len() < self.block_size() {
-            return Err(Error::NotEnoughSpace);
+            return Err(Error::NotEnoughSpaceForRead);
         }
 
         let offset = blk_idx * self.block_size();
         self.file
             .seek(SeekFrom::Start(offset as u64))
-            .map_err(|_e| Error::BlockOutOfRange)?;
+            .map_err(|_e| Error::CanNotSeekForRead)?;
 
         let data = &mut data[..self.block_size()];
 
@@ -81,7 +81,7 @@ impl Storage for FileStorage {
         let offset = blk_idx * self.block_size();
         self.file
             .seek(SeekFrom::Start(offset as u64))
-            .map_err(|_e| Error::BlockOutOfRange)?;
+            .map_err(|_e| Error::CanNotSeekForWrite)?;
 
         for i in 0..self.retries {
             let res = self.file.write_all(data);

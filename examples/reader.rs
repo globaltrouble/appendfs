@@ -111,7 +111,7 @@ fn main() {
         });
         match read {
             Ok(_) => {}
-            Err(FsError::NotValidBlock) => {
+            Err(FsError::NotValidBlockForRead) => {
                 log!(info, "Finish reading at: {}", offset);
                 break;
             }

@@ -14,7 +14,7 @@ impl<const S: usize, const B: usize> RamStorage<S, B> {
         }
 
         if S % B != 0 {
-            return Err(Error::InvalidBlockSize);
+            return Err(Error::InvalidBlockSizeForStorage);
         }
 
         Ok(Self { data: [0_u8; S] })
@@ -26,7 +26,7 @@ impl<const S: usize, const B: usize> Storage for RamStorage<S, B> {
         validate_block_index(self, blk_idx)?;
 
         if data.len() < self.block_size() {
-            return Err(Error::NotEnoughSpace);
+            return Err(Error::NotEnoughSpaceForRead);
         }
 
         let begin = blk_idx * self.block_size();

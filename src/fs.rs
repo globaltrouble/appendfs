@@ -122,7 +122,7 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
             let block = Block::<BS>::from_buffer(data_buf);
             if !block.is_valid() {
                 log!(debug, "Block at {} is invalid", offset);
-                return Err(Error::NotValidBlock);
+                return Err(Error::NotValidBlockForRead);
             }
         }
         reader(&data_buf[fields::DATA_BEGIN..]);
@@ -276,7 +276,7 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         self.storage.write(blk_idx, data_buf)?;
 
         if config_was_not_written {
-            return Err(Error::NotValidBlock);
+            return Err(Error::CanNotWriteConfig);
         }
 
         Ok(())
@@ -573,7 +573,7 @@ mod tests {
                         i
                     );
                 }
-                Err(Error::NotValidBlock) => {
+                Err(Error::NotValidBlockForRead) => {
                     assert!(
                         i < AVAILABLE_BLOCK_COUNT,
                         "Data must not be read before wraparound, i: {}",
