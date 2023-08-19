@@ -7,7 +7,7 @@ use rand::Rng;
 use appendfs::error::Error as FsError;
 use appendfs::fs::Filesystem;
 use appendfs::log;
-use appendfs::storage::{file::FileStorage, Storage};
+use appendfs::storage::file::FileStorage;
 
 const DEFAULT_BLOCK_SIZE: u32 = 512;
 const DEFAULT_BEGIN_BLOCK_IDX: u32 = 2048;
@@ -60,14 +60,8 @@ fn main() {
     };
 
     if args.format_only {
-        let mut header_block = Vec::with_capacity(args.block_size as usize);
-        header_block.resize(args.block_size as usize, 0);
-        let res = storage.write(begin_block as usize, &mut header_block[..]);
-        if res.is_err() {
-            log!(error, "Can't format header, err: {:?}", res);
-        }
-
-        match Fs::new(&mut storage, rand::thread_rng().gen::<u32>()) {
+        let fs_id = rand::thread_rng().gen::<u32>();
+        match Fs::new(&mut storage, fs_id) {
             Ok(fs) => {
                 log!(
                     info,

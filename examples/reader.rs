@@ -84,7 +84,7 @@ fn main() {
 
     log!(
         info,
-        "Reading from {} to {} (used={}), base is: {}",
+        "Reading from {} to {} (used_blocks={}), base offset: {}",
         begin_block,
         end_block,
         used,

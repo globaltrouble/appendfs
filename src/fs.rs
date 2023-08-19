@@ -43,7 +43,7 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
         if !info.is_valid {
             return Err(Error::InvalidHeaderBlock);
         }
-        log!(trace, "Restore storage with fs is: {}", info.fs_id);
+        log!(info, "Restore storage with fs id: {}", info.fs_id);
         Self::new(storage, info.fs_id)
     }
 
@@ -120,7 +120,7 @@ impl<'a, S: Storage, const BS: usize> Filesystem<'a, S, BS> {
 
         {
             let block = Block::<BS>::from_buffer(data_buf);
-            if !block.is_valid() {
+            if !block.is_valid() || block.fs_id() != self.id {
                 log!(debug, "Block at {} is invalid", offset);
                 return Err(Error::NotValidBlockForRead);
             }

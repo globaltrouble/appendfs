@@ -5,6 +5,7 @@ use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::string::{String, ToString};
 
+use crate::block::fields;
 use crate::error::Error;
 use crate::log;
 use crate::storage::Storage;
@@ -53,6 +54,7 @@ impl Storage for FileStorage {
         }
 
         let offset = blk_idx * self.block_size();
+        log!(trace, "Read at {}", offset);
         self.file
             .seek(SeekFrom::Start(offset as u64))
             .map_err(|_e| Error::CanNotSeekForRead)?;
@@ -76,6 +78,8 @@ impl Storage for FileStorage {
             }
         }
 
+        log!(trace, "Read data: {:?}", &data[..fields::DATA_BEGIN]);
+
         Ok(self.block_size())
     }
 
@@ -86,6 +90,12 @@ impl Storage for FileStorage {
         }
 
         let offset = blk_idx * self.block_size();
+        log!(
+            trace,
+            "Write at {}, data: {:?}",
+            offset,
+            &data[..fields::DATA_BEGIN]
+        );
         self.file
             .seek(SeekFrom::Start(offset as u64))
             .map_err(|_e| Error::CanNotSeekForWrite)?;
