@@ -101,7 +101,7 @@ fn main() {
                     Err(e) => {
                         log!(
                             error,
-                            "Can't write block base_offset: {}, offste: {}, error: {:?}",
+                            "Can't write to stdout, base_offset: {}, offste: {}, error: {:?}",
                             base_offset,
                             offset,
                             e
