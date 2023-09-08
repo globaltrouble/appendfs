@@ -93,7 +93,7 @@ fn main() {
 
     for offset in 0..used {
         let read = filesystem.read(offset as usize, |blk_data| {
-            log!(info, "Reading offste: {} ...", offset);
+            log!(info, "Reading offset: {} ...", offset);
             {
                 let mut handle = io::stdout().lock();
                 match handle.write_all(blk_data) {
@@ -101,7 +101,7 @@ fn main() {
                     Err(e) => {
                         log!(
                             error,
-                            "Can't write to stdout, base_offset: {}, offste: {}, error: {:?}",
+                            "Can't write to stdout, base_offset: {}, offset: {}, error: {:?}",
                             base_offset,
                             offset,
                             e

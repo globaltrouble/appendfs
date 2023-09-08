@@ -78,7 +78,7 @@ impl Storage for FileStorage {
             }
         }
 
-        log!(trace, "Read data: {:?}", &data[..fields::DATA_BEGIN]);
+        log!(trace, "Read data header: {:?}", &data[..fields::DATA_BEGIN]);
 
         Ok(self.block_size())
     }
