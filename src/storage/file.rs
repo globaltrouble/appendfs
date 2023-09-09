@@ -78,7 +78,7 @@ impl Storage for FileStorage {
             }
         }
 
-        log!(trace, "Read data header: {:?}", &data[..fields::DATA_BEGIN]);
+        log!(trace, "Read header: {:?}", &data[..fields::DATA_BEGIN]);
 
         Ok(self.block_size())
     }
@@ -92,7 +92,7 @@ impl Storage for FileStorage {
         let offset = blk_idx * self.block_size();
         log!(
             trace,
-            "Write at {}, data: {:?}",
+            "Write at {}, header: {:?}",
             offset,
             &data[..fields::DATA_BEGIN]
         );
